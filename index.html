@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WARGA - Sistem Kependudukan</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#f1f5f9;color:#172033}
+header{background:#111827;color:white;padding:18px}
+header h2{margin:0}
+main{max-width:1000px;margin:auto;padding:16px}
+.card{background:white;padding:18px;border-radius:12px;margin-bottom:15px;box-shadow:0 2px 8px #0001}
+input,select{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #cbd5e1;border-radius:7px}
+button{padding:11px 15px;border:0;border-radius:7px;background:#2457d6;color:white;font-weight:bold;margin:4px;cursor:pointer}
+.danger{background:#c0392b}
+.secondary{background:#64748b}
+.hidden{display:none}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.stat{background:#eaf0ff;padding:15px;border-radius:9px}
+.stat b{display:block;font-size:25px}
+.tablebox{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:650px}
+th,td{padding:10px;border-bottom:1px solid #ddd;text-align:left;font-size:13px}
+th{background:#edf2f7}
+.msg{padding:10px;background:#eaf8f1;color:#126344;border-radius:7px;margin:10px 0}
+.err{background:#ffeded;color:#a22}
+@media(max-width:600px){.stats{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+<h2>WARGA</h2>
+<div>Sistem Informasi Kependudukan</div>
+</header>
+
+<main>
+<section id="login" class="card">
+<h3>Login Petugas</h3>
+<label>Email</label>
+<input id="email" type="email" placeholder="Email Firebase">
+<label>Password</label>
+<input id="password" type="password" placeholder="Password">
+<button id="loginBtn">MASUK</button>
+<div id="loginMsg"></div>
+</section>
+
+<section id="dashboard" class="hidden">
+<div class="card">
+<h3 id="welcome">Dashboard</h3>
+<button id="logout" class="secondary">KELUAR</button>
+</div>
+
+<div class="stats">
+<div class="stat">Total Penduduk<b id="total">0</b></div>
+<div class="stat">Laki-laki<b id="male">0</b></div>
+<div class="stat">Perempuan<b id="female">0</b></div>
+</div>
+
+<div id="editor" class="card hidden">
+<h3 id="formTitle">Tambah Penduduk</h3>
+<input id="docId" type="hidden">
+<label>NIK (16 digit)</label>
+<input id="nik" maxlength="16" inputmode="numeric">
+<label>Nama Lengkap</label>
+<input id="nama">
+<label>Jenis Kelamin</label>
+<select id="jk">
+<option value="">Pilih jenis kelamin</option>
+<option>Laki-laki</option>
+<option>Perempuan</option>
+</select>
+<label>Tanggal Lahir</label>
+<input id="lahir" type="date">
+<label>Nomor Kartu Keluarga</label>
+<input id="kk" maxlength="16">
+<label>Alamat</label>
+<input id="alamat">
+<label>RT</label>
+<input id="rt">
+<label>RW</label>
+<input id="rw">
+<label>Desa/Kelurahan</label>
+<input id="desa">
+<label>Kecamatan</label>
+<input id="kecamatan">
+<button id="saveBtn">SIMPAN DATA</button>
+<button id="cancelBtn" class="secondary">BATAL</button>
+</div>
+
+<div class="card">
+<h3>Data Penduduk</h3>
+<input id="search" placeholder="Cari NIK atau nama...">
+<div class="tablebox">
+<table>
+<thead>
+<tr>
+<th>NIK</th><th>Nama</th><th>JK</th>
+<th>Nomor KK</th><th>Alamat</th><th>Aksi</th>
+</tr>
+</thead>
+<tbody id="rows">
+<tr><td colspan="6">Memuat data...</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+</section>
+</main>
+
+<script type="module">
+import {initializeApp}
+from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
+
+import {
+getAuth, signInWithEmailAndPassword,
+onAuthStateChanged, signOut
+} from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
+
+import {
+getFirestore, collection, doc, getDoc,
+addDoc, updateDoc, deleteDoc, onSnapshot,
+serverTimestamp
+} from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+
+const firebaseConfig = {
+apiKey:"AIzaSyBVYWUajXi-4P5LUso_ze13YNz6GCt1gN4",
+authDomain:"warga-population-system.firebaseapp.com",
+projectId:"warga-population-system",
+storageBucket:"warga-population-system.firebasestorage.app",
+messagingSenderId:"1011194056660",
+appId:"1:1011194056660:web:aea96f4dc2c5bdb2309041",
+measurementId:"G-3YXSL1E2RZ"
+};
+
+const app=initializeApp(firebaseConfig);
+const auth=getAuth(app);
+const db=getFirestore(app);
+
+const el=id=>document.getElementById(id);
+let profile=null;
+let data=[];
+let stopListener=null;
+
+function msg(id,text,error=false){
+el(id).textContent=text;
+el(id).className=error?"msg err":"msg";
+}
+
+function resetForm(){
+["docId","nik","nama","jk","lahir","kk","alamat","rt","rw","desa","kecamatan"]
+.forEach(id=>el(id).value="");
+el("formTitle").textContent="Tambah Penduduk";
+}
+
+el("loginBtn").onclick=async()=>{
+try{
+el("loginBtn").disabled=true;
+await signInWithEmailAndPassword(
+auth,el("email").value.trim(),el("password").value
+);
+el("password").value="";
+el("loginMsg").textContent="";
+}catch(e){
+msg("loginMsg","Login gagal: "+e.message,true);
+}finally{
+el("loginBtn").disabled=false;
+}
+};
+
+el("logout").onclick=()=>signOut(auth);
+
+onAuthStateChanged(auth,async user=>{
+if(stopListener){stopListener();stopListener=null;}
+if(!user){
+profile=null;
+el("login").classList.remove("hidden");
+el("dashboard").classList.add("hidden");
+return;
+}
+try{
+const snap=await getDoc(doc(db,"users",user.uid));
+if(!snap.exists())throw new Error("Profil users/"+user.uid+" belum dibuat.");
+profile=snap.data();
+if(profile.active!==true ||
+!["admin","operator","viewer"].includes(profile.role)){
+throw new Error("Akun tidak aktif atau role tidak valid.");
+}
+el("login").classList.add("hidden");
+el("dashboard").classList.remove("hidden");
+el("welcome").textContent="Selamat datang, "+(profile.name||user.email)+" ("+profile.role+")";
+el("editor").classList.toggle("hidden",!["admin","operator"].includes(profile.role));
+listenData();
+}catch(e){
+await signOut(auth);
+msg("loginMsg",e.message,true);
+}
+});
+
+function listenData(){
+stopListener=onSnapshot(collection(db,"residents"),snap=>{
+data=snap.docs.map(d=>({id:d.id,...d.data()}));
+render();
+},e=>alert("Gagal memuat data: "+e.message));
+}
+
+function render(){
+el("total").textContent=data.length;
+el("male").textContent=data.filter(x=>x.jk==="Laki-laki").length;
+el("female").textContent=data.filter(x=>x.jk==="Perempuan").length;
+
+const term=el("search").value.toLowerCase();
+const filtered=data.filter(x=>
+String(x.nik||"").includes(term) ||
+String(x.nama||"").toLowerCase().includes(term)
+);
+
+el("rows").innerHTML=filtered.map(x=>`
+<tr>
+<td>${safe(x.nik)}</td>
+<td>${safe(x.nama)}</td>
+<td>${safe(x.jk)}</td>
+<td>${safe(x.kk)}</td>
+<td>${safe(x.alamat)}</td>
+<td>
+${profile.role!=="viewer"?
+`<button data-edit="${safe(x.id)}">Edit</button>`:""}
+${profile.role==="admin"?
+`<button class="danger" data-del="${safe(x.id)}">Hapus</button>`:""}
+</td>
+</tr>`).join("") ||
+'<tr><td colspan="6">Data tidak ditemukan.</td></tr>';
+}
+
+function safe(v){
+return String(v??"").replace(/[&<>"']/g,c=>({
+"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+}[c]));
+}
+
+el("search").oninput=render;
+
+el("saveBtn").onclick=async()=>{
+if(!profile||!["admin","operator"].includes(profile.role))return;
+
+const nik=el("nik").value.trim();
+const nama=el("nama").value.trim();
+if(!/^\d{16}$/.test(nik)){
+alert("NIK wajib 16 angka.");return;
+}
+if(!nama){alert("Nama wajib diisi.");return;}
+
+const record={
+nik,nama,jk:el("jk").value,
+lahir:el("lahir").value,
+kk:el("kk").value.trim(),
+alamat:el("alamat").value.trim(),
+rt:el("rt").value.trim(),
+rw:el("rw").value.trim(),
+desa:el("desa").value.trim(),
+kecamatan:el("kecamatan").value.trim(),
+updatedAt:serverTimestamp()
+};
+
+try{
+const id=el("docId").value;
+if(id){
+await updateDoc(doc(db,"residents",id),record);
+}else{
+if(data.some(x=>x.nik===nik)){
+alert("NIK sudah ada dalam data yang sedang dimuat.");return;
+}
+await addDoc(collection(db,"residents"),{
+...record,createdAt:serverTimestamp()
+});
+}
+resetForm();
+alert("Data berhasil disimpan.");
+}catch(e){alert("Gagal menyimpan: "+e.message);}
+};
+
+el("cancelBtn").onclick=resetForm;
+
+el("rows").onclick=async e=>{
+const edit=e.target.dataset.edit;
+const del=e.target.dataset.del;
+
+if(edit){
+const x=data.find(r=>r.id===edit);
+if(!x)return;
+const fields={
+docId:"id",nik:"nik",nama:"nama",jk:"jk",
+lahir:"lahir",kk:"kk",alamat:"alamat",
+rt:"rt",rw:"rw",desa:"desa",kecamatan:"kecamatan"
+};
+Object.entries(fields).forEach(([field,key])=>{
+el(field).value=x[key]||"";
+});
+el("formTitle").textContent="Ubah Data Penduduk";
+window.scrollTo({top:0,behavior:"smooth"});
+}
+
+if(del && profile.role==="admin" &&
+confirm("Hapus data penduduk ini?")){
+try{
+await deleteDoc(doc(db,"residents",del));
+alert("Data berhasil dihapus.");
+}catch(e){alert("Gagal menghapus: "+e.message);}
+}
+};
+</script>
+</body>
+</html>
